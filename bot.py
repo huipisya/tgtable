@@ -65,15 +65,37 @@ def get_next_number():
 
 # Добавить пост в Excel
 def add_post_to_excel(link, status=None):
+    from openpyxl.styles import Alignment, Border, Side
+    
     wb = openpyxl.load_workbook(EXCEL_FILE)
     ws = wb.active
     row = ws.max_row + 1
     number = row - 1  # Минус заголовок
     
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
     ws[f'A{row}'] = number
-    ws[f'B{row}'] = link
+    ws[f'A{row}'].alignment = Alignment(horizontal="center", vertical="center")
+    ws[f'A{row}'].border = thin_border
+    
+    # Добавляем ссылку как гиперссылку
+    ws[f'B{row}'].hyperlink = link
+    ws[f'B{row}'].value = link
+    ws[f'B{row}'].style = "Hyperlink"
+    ws[f'B{row}'].border = thin_border
+    
     ws[f'C{row}'] = status if status else ""
+    ws[f'C{row}'].alignment = Alignment(horizontal="center", vertical="center")
+    ws[f'C{row}'].border = thin_border
+    
     ws[f'D{row}'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ws[f'D{row}'].alignment = Alignment(horizontal="center", vertical="center")
+    ws[f'D{row}'].border = thin_border
     
     wb.save(EXCEL_FILE)
     return number
@@ -104,6 +126,11 @@ def update_post_status(link, status):
             wb.save(EXCEL_FILE)
             return True
     return False
+
+# Создать кнопку для отправки базы данных
+def get_export_button():
+    keyboard = [[InlineKeyboardButton("📊 Отправить актуальную базу данных", callback_data='export_db')]]
+    return InlineKeyboardMarkup(keyboard)
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -140,6 +167,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    # Обработка экспорта базы данных
+    if query.data == 'export_db':
+        if os.path.exists(EXCEL_FILE):
+            await query.message.reply_document(
+                document=open(EXCEL_FILE, 'rb'),
+                filename=f'posts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+                caption="📊 Вот твоя база данных постов!"
+            )
+        else:
+            await query.edit_message_text("❌ База данных пуста. Добавь хотя бы один пост.")
+        return
+    
     link = context.user_data.get('current_link')
     
     if not link:
@@ -151,7 +190,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         number = add_post_to_excel(link)
         await query.edit_message_text(
             f"✅ Пост #{number} добавлен в базу данных!\n\n"
-            f"Ссылка: {link}"
+            f"Ссылка: {link}",
+            reply_markup=get_export_button()
         )
         context.user_data.clear()
         
@@ -168,12 +208,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if delete_post_from_excel(link):
             await query.edit_message_text(
                 f"🗑️ Пост удалён из базы данных!\n\n"
-                f"Ссылка: {link}"
+                f"Ссылка: {link}",
+                reply_markup=get_export_button()
             )
         else:
             await query.edit_message_text(
                 f"❌ Пост не найден в базе данных.\n\n"
-                f"Ссылка: {link}"
+                f"Ссылка: {link}",
+                reply_markup=get_export_button()
             )
         context.user_data.clear()
 
@@ -188,7 +230,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"✅ Пост #{number} добавлен в базу данных!\n\n"
                 f"Ссылка: {link}\n"
-                f"Статус: {status}"
+                f"Статус: {status}",
+                reply_markup=get_export_button()
             )
             context.user_data.clear()
         else:
