@@ -14,7 +14,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Имя файла Excel
-EXCEL_FILE = 'posts_database.xlsx'
+# Используем переменную окружения для пути к постоянному хранилищу
+DATA_DIR = os.getenv('DATA_DIR', '.')
+EXCEL_FILE = os.path.join(DATA_DIR, 'posts_database.xlsx')
 
 # Инициализация Excel файла
 def init_excel():
@@ -172,8 +174,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if os.path.exists(EXCEL_FILE):
             await query.message.reply_document(
                 document=open(EXCEL_FILE, 'rb'),
-                filename=f'posts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
-                caption="📊 Вот твоя база данных постов!"
+                filename=f'posts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
             )
         else:
             await query.edit_message_text("❌ База данных пуста. Добавь хотя бы один пост.")
@@ -205,18 +206,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     elif query.data == 'delete_post':
         # Удалить пост
-        if delete_post_from_excel(link):
-            await query.edit_message_text(
-                f"🗑️ Пост удалён из базы данных!\n\n"
-                f"Ссылка: {link}",
-                reply_markup=get_export_button()
-            )
-        else:
-            await query.edit_message_text(
-                f"❌ Пост не найден в базе данных.\n\n"
-                f"Ссылка: {link}",
-                reply_markup=get_export_button()
-            )
+        delete_post_from_excel(link)
+        await query.edit_message_text(
+            f"🗑️ Пост удалён из базы данных!\n\n"
+            f"Ссылка: {link}",
+            reply_markup=get_export_button()
+        )
         context.user_data.clear()
 
 # Обработка текстовых сообщений (для статуса)
@@ -245,8 +240,7 @@ async def export_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if os.path.exists(EXCEL_FILE):
         await update.message.reply_document(
             document=open(EXCEL_FILE, 'rb'),
-            filename=f'posts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
-            caption="📊 Вот твоя база данных постов!"
+            filename=f'posts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
         )
     else:
         await update.message.reply_text("❌ База данных пуста. Добавь хотя бы один пост.")
