@@ -18,8 +18,17 @@ logger = logging.getLogger(__name__)
 DATA_DIR = os.getenv('DATA_DIR', '.')
 EXCEL_FILE = os.path.join(DATA_DIR, 'posts_database.xlsx')
 
+# ID чата для бэкапа
+BACKUP_CHAT_ID = os.getenv('BACKUP_CHAT_ID')
+
+# Глобальная переменная для application
+app = None
+
 # Инициализация Excel файла
 def init_excel():
+    # Создаем директорию если её нет
+    os.makedirs(DATA_DIR, exist_ok=True)
+    
     if not os.path.exists(EXCEL_FILE):
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         
@@ -58,6 +67,20 @@ def init_excel():
         
         wb.save(EXCEL_FILE)
         logger.info("Создан новый Excel файл")
+
+# Отправить бэкап в указанный чат
+async def send_backup():
+    if BACKUP_CHAT_ID and os.path.exists(EXCEL_FILE):
+        try:
+            with open(EXCEL_FILE, 'rb') as f:
+                await app.bot.send_document(
+                    chat_id=BACKUP_CHAT_ID,
+                    document=f,
+                    filename=f'backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+                )
+            logger.info("Бэкап отправлен успешно")
+        except Exception as e:
+            logger.error(f"Ошибка отправки бэкапа: {e}")
 
 # Получить следующий номер для поста
 def get_next_number():
@@ -100,6 +123,11 @@ def add_post_to_excel(link, status=None):
     ws[f'D{row}'].border = thin_border
     
     wb.save(EXCEL_FILE)
+    
+    # Отправляем бэкап после добавления
+    import asyncio
+    asyncio.create_task(send_backup())
+    
     return number
 
 # Удалить пост из Excel по ссылке
@@ -114,6 +142,11 @@ def delete_post_from_excel(link):
             for i in range(row, ws.max_row + 1):
                 ws[f'A{i}'] = i - 1
             wb.save(EXCEL_FILE)
+            
+            # Отправляем бэкап после удаления
+            import asyncio
+            asyncio.create_task(send_backup())
+            
             return True
     return False
 
@@ -274,25 +307,27 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Основная функция
 def main():
+    global app
+    
     # Инициализация Excel
     init_excel()
     
     # Токен бота
     TOKEN = os.getenv("BOT_TOKEN")
     
-    # Создание приложения (без job_queue чтобы избежать ошибки)
-    application = Application.builder().token(TOKEN).job_queue(None).build()
+    # Создание приложения (без job_queue  чтобы избежать ошибки)
+    app = Application.builder().token(TOKEN).job_queue(None).build()
     
     # Регистрация обработчиков
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("export", export_database))
-    application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("export", export_database))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     # Запуск бота
     logger.info("Бот запущен!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
