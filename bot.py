@@ -19,13 +19,41 @@ EXCEL_FILE = 'posts_database.xlsx'
 # Инициализация Excel файла
 def init_excel():
     if not os.path.exists(EXCEL_FILE):
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
         wb = Workbook()
         ws = wb.active
         ws.title = "Посты"
-        ws['A1'] = '№'
-        ws['B1'] = 'Ссылка'
-        ws['C1'] = 'Статус'
-        ws['D1'] = 'Дата добавления'
+        
+        # Заголовки
+        headers = ['№', 'Ссылка', 'Статус', 'Дата добавления']
+        ws.append(headers)
+        
+        # Стиль для заголовков
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        alignment_center = Alignment(horizontal="center", vertical="center")
+        
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Применяем стиль к заголовкам
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = alignment_center
+            cell.border = thin_border
+        
+        # Устанавливаем ширину столбцов
+        ws.column_dimensions['A'].width = 8   # №
+        ws.column_dimensions['B'].width = 60  # Ссылка
+        ws.column_dimensions['C'].width = 20  # Статус
+        ws.column_dimensions['D'].width = 22  # Дата
+        
         wb.save(EXCEL_FILE)
         logger.info("Создан новый Excel файл")
 
@@ -213,7 +241,7 @@ def main():
     init_excel()
     
     # Токен бота
-    TOKEN = "8453631484:AAH-5tZBhmlHsFVJXl6YNrMlf_a4pKPdfQA"
+    TOKEN = os.getenv("BOT_TOKEN")
     
     # Создание приложения (без job_queue чтобы избежать ошибки)
     application = Application.builder().token(TOKEN).job_queue(None).build()
