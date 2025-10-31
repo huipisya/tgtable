@@ -196,7 +196,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_user_excel(user_id)
     await update.message.reply_text(
         f"👋 Привет, {update.effective_user.first_name}! Я бот для сохранения постов.\n\n"
-        "Просто *перешли* мне пост из Telegram — я автоматически сохраню его ссылку в *твою* персональную базу данных.\n\n"
+        "Просто *перешли* мне пост из Telegram или отправь ссылку — я спрошу, когда он вышел.\n\n"
         "Команды:\n"
         "/export - выгрузить *твою* базу данных в Excel\n"
         "/stats - статистика *твоих* постов"
@@ -212,17 +212,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text:
         link = extract_telegram_link(text)
         if link:
-            # Автоматически добавляем пост без показа кнопок
-            try:
-                number = add_post_to_excel(user_id, link)
-                await update.message.reply_text(
-                    f"✅ Пост #{number} автоматически добавлен в *твою* базу данных!\n\n"
-                    f"Ссылка: {link}",
-                    reply_markup=get_export_button()
-                )
-            except Exception as e:
-                logger.error(f"Ошибка при добавлении поста для пользователя {user_id}: {e}")
-                await update.message.reply_text("❌ Произошла ошибка при добавлении поста. Попробуй ещё раз.")
+            # Сохраняем ссылку в контексте пользователя
+            context.user_data['current_link'] = link
+            
+            # Создаём кнопки для выбора времени публикации
+            keyboard = [
+                [InlineKeyboardButton("Вышли первыми", callback_data='status_1')],
+                [InlineKeyboardButton("Вышли в течение часа", callback_data='status_2')],
+                [InlineKeyboardButton("Вышли в течение 2-3 часов", callback_data='status_3')],
+                [InlineKeyboardButton("Вышли больше, чем через 3 часа", callback_data='status_4')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                f"📌 Пост получен!\n\nСсылка: {link}\n\nКогда он вышел?",
+                reply_markup=reply_markup
+            )
         else:
             # Ссылка не найдена — отправляем сообщение об ошибке
             await update.message.reply_text(
@@ -236,26 +241,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Отправь ссылку, перешли пост с комментарием или отправь медиа с подписью содержащей ссылку."
         )
 
-# Обработка нажатий на кнопки (для /export и других команд)
+# Обработка нажатий на кнопки
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     user_id = query.from_user.id
+    link = context.user_data.get('current_link')
 
-    if query.data == 'export_db':
-        excel_file = get_user_excel_file(user_id)
-        if os.path.exists(excel_file):
-            await query.message.reply_document(
-                document=open(excel_file, 'rb'),
-                filename=f'my_posts_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-            )
-        else:
-            await query.edit_message_text("❌ Твоя база данных пуста. Добавь хотя бы один пост.")
+    if not link:
+        await query.edit_message_text("❌ Ошибка: ссылка не найдена. Отправь ссылку заново.")
         return
 
-    # Здесь можно добавить другие кнопки, если нужно
-    # Сейчас мы не используем кнопки для добавления/удаления, так как это делается автоматически
+    # Определяем статус на основе нажатой кнопки
+    status_mapping = {
+        'status_1': "Вышли первыми",
+        'status_2': "Вышли в течение часа",
+        'status_3': "Вышли в течение 2-3 часов",
+        'status_4': "Вышли больше, чем через 3 часа"
+    }
+
+    selected_status = status_mapping.get(query.data)
+    if selected_status:
+        try:
+            number = add_post_to_excel(user_id, link, selected_status)
+            await query.edit_message_text(
+                f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
+                f"Ссылка: {link}\n"
+                f"Статус: {selected_status}",
+                reply_markup=get_export_button()
+            )
+            # Очищаем контекст после добавления
+            context.user_data.pop('current_link', None)
+        except Exception as e:
+            logger.error(f"Ошибка при добавлении поста для пользователя {user_id}: {e}")
+            await query.edit_message_text("❌ Произошла ошибка при добавлении поста. Попробуй ещё раз.")
+            # Очищаем контекст в случае ошибки тоже
+            context.user_data.pop('current_link', None)
+    else:
+        # Если кнопка не распознана
+        await query.edit_message_text("❌ Неизвестная команда. Попробуй снова.")
+        # Очищаем контекст, чтобы не мешал
+        context.user_data.pop('current_link', None)
+
 
 async def export_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -314,7 +342,7 @@ def main():
     # Обработчик для всех сообщений, кроме команд
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     
-    logger.info("Бот запущен с автоматической обработкой пересланных постов!")
+    logger.info("Бот запущен с показом кнопок времени публикации!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
