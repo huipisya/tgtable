@@ -337,7 +337,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(message)
 
-# Основная функция
+# Основная функция запуска бота
 def main():
     global app
 
@@ -353,7 +353,7 @@ def main():
     app.add_handler(CommandHandler("export", export_database))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CallbackQueryHandler(button_handler))
-    # Обработчик для всех сообщений,  кроме команд
+    # Обработчик для всех сообщений, кроме команд
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     
     logger.info("Бот запущен с показом кнопок времени публикации!")
