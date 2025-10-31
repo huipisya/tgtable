@@ -100,7 +100,7 @@ def get_next_number(user_id: int):
     return ws.max_row
 
 def add_post_to_excel(user_id: int, link: str, status=None):
-    from openpyxl.styles import Alignment, Border, Side
+    from openpyxl.styles import Alignment, Border, Side, Font # Импортируем Font
     
     excel_file = get_user_excel_file(user_id)
     if not os.path.exists(excel_file):
@@ -122,9 +122,13 @@ def add_post_to_excel(user_id: int, link: str, status=None):
     ws[f'A{row}'].alignment = Alignment(horizontal="center", vertical="center")
     ws[f'A{row}'].border = thin_border
     
-    ws[f'B{row}'].hyperlink = link
+    # --- ИЗМЕНЕНИЕ: Добавляем кликабельную ссылку ---
     ws[f'B{row}'].value = link
+    ws[f'B{row}'].hyperlink = link # Установка гиперссылки
+    # Применяем стиль, чтобы выглядело как гиперссылка
+    ws[f'B{row}'].font = Font(color="0563C1", underline="single") # Стандартный цвет и стиль гиперссылки
     ws[f'B{row}'].border = thin_border
+    # --- /ИЗМЕНЕНИЕ --
     
     ws[f'C{row}'] = status if status else ""
     ws[f'C{row}'].alignment = Alignment(horizontal="center", vertical="center")
