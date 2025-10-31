@@ -204,8 +204,7 @@ def get_time_options_keyboard():
         [InlineKeyboardButton("Вышли в течение 2-3 часов", callback_data='status_3')],
         [InlineKeyboardButton("Вышли больше, чем через 3 часа", callback_data='status_4')]
     ]
-    # Добавляем кнопку "Отправить актуальную базу данных" сразу после кнопок времени
-    keyboard.append([InlineKeyboardButton("Отправить актуальную базу данных", callback_data='export_db')])
+
     return InlineKeyboardMarkup(keyboard)
 
 def get_new_link_keyboard():
@@ -238,7 +237,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 Привет, {update.effective_user.first_name}! Я бот для сохранения постов.\n\n"
         "Просто *перешли* мне пост из Telegram или отправь ссылку.\n\n"
         "Команды:\n"
-        "/export - выгрузить *твою* базу данных в Excel\n"
+        "/export - выгрузить твою базу данных в Excel\n"
         "/stats - статистика *твоих* постов"
     )
 
@@ -266,7 +265,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['current_link'] = link
                 reply_markup = get_time_options_keyboard()
                 await update.message.reply_text(
-                    f"📌 Пост получен!\n\nСсылка: {link}\n\nКогда он вышел?",
+                    f"📌 Пост получен!\n\nСсылка: {link}\n\nУкажи, когда он вышел по кнопкам ниже",
                     reply_markup=reply_markup
                 )
         else:
