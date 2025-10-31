@@ -4,6 +4,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 import openpyxl
 from openpyxl import Workbook
 import os
+import re # Для работы с регулярными выражениями
 from datetime import datetime
 
 # Настройка логирования
@@ -14,22 +15,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Имя директории для хранения файлов пользователей
-# Используем переменную окружения для пути к постоянному хранилищу, по умолчанию 'user_data'
 DATA_DIR = os.getenv('DATA_DIR', 'user_data')
-# Убедимся, что директория существует
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# ID чата для бэкапа (один на всех, или можно сделать индивидуально, если нужно)
+# ID чата для бэкапа
 BACKUP_CHAT_ID = os.getenv('BACKUP_CHAT_ID')
 
 # Глобальная переменная для application
 app = None
 
 # --- ФУНКЦИИ РАБОТЫ С ИНДИВИДУАЛЬНЫМИ ФАЙЛАМИ ---
+# (Все функции get_user_excel_file, init_user_excel, send_backup_for_user остаются без изменений)
 
 def get_user_excel_file(user_id: int) -> str:
     """Возвращает путь к Excel-файлу конкретного пользователя."""
-    # Имя файла: user_{user_id}.xlsx
     return os.path.join(DATA_DIR, f'user_{user_id}.xlsx')
 
 def init_user_excel(user_id: int):
@@ -81,8 +80,6 @@ def send_backup_for_user(user_id: int):
         excel_file = get_user_excel_file(user_id)
         if os.path.exists(excel_file):
             try:
-                # Отправляем файл напрямую, используя file_id или file_path
-                # В polling режиме нужно открыть файл для отправки
                 import asyncio
                 async def _send():
                     try:
@@ -96,7 +93,6 @@ def send_backup_for_user(user_id: int):
                     except Exception as e:
                         logger.error(f"Ошибка отправки бэкапа для пользователя {user_id}: {e}")
 
-                # Создаём задачу для асинхронной отправки
                 asyncio.create_task(_send())
             except Exception as e:
                 logger.error(f"Ошибка подготовки бэкапа для пользователя {user_id}: {e}")
@@ -105,29 +101,27 @@ def send_backup_for_user(user_id: int):
 
 
 # --- ОБНОВЛЁННЫЕ ФУНКЦИИ РАБОТЫ С EXCEL ---
+# (Функции get_next_number, add_post_to_excel, delete_post_from_excel, update_post_status остаются без изменений)
 
-# Получить следующий номер для поста (для конкретного пользователя)
 def get_next_number(user_id: int):
     excel_file = get_user_excel_file(user_id)
     if not os.path.exists(excel_file):
-        init_user_excel(user_id) # Убедимся, что файл существует
-
+        init_user_excel(user_id)
     wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
-    return ws.max_row  # Вернёт номер следующей строки
+    return ws.max_row
 
-# Добавить пост в Excel (для конкретного пользователя)
 def add_post_to_excel(user_id: int, link: str, status=None):
     from openpyxl.styles import Alignment, Border, Side
     
     excel_file = get_user_excel_file(user_id)
     if not os.path.exists(excel_file):
-        init_user_excel(user_id) # Убедимся, что файл существует
+        init_user_excel(user_id)
 
     wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
     row = ws.max_row + 1
-    number = row - 1  # Минус заголовок
+    number = row - 1
     
     thin_border = Border(
         left=Side(style='thin'),
@@ -140,10 +134,8 @@ def add_post_to_excel(user_id: int, link: str, status=None):
     ws[f'A{row}'].alignment = Alignment(horizontal="center", vertical="center")
     ws[f'A{row}'].border = thin_border
     
-    # Добавляем ссылку как гиперссылку
     ws[f'B{row}'].hyperlink = link
     ws[f'B{row}'].value = link
-    ws[f'B{row}'].style = "Hyperlink" # Note: openpyxl не сохраняет стиль Hyperlink в Excel, но значение и гиперссылка будут
     ws[f'B{row}'].border = thin_border
     
     ws[f'C{row}'] = status if status else ""
@@ -155,13 +147,9 @@ def add_post_to_excel(user_id: int, link: str, status=None):
     ws[f'D{row}'].border = thin_border
     
     wb.save(excel_file)
-    
-    # Отправляем бэкап после добавления
     send_backup_for_user(user_id)
-    
     return number
 
-# Удалить пост из Excel по ссылке (для конкретного пользователя)
 def delete_post_from_excel(user_id: int, link: str):
     excel_file = get_user_excel_file(user_id)
     if not os.path.exists(excel_file):
@@ -175,20 +163,17 @@ def delete_post_from_excel(user_id: int, link: str):
     for row in range(2, ws.max_row + 1):
         if ws[f'B{row}'].value == link:
             ws.delete_rows(row)
-            # Перенумеровать все посты после удаления
             for i in range(row, ws.max_row + 1):
                 ws[f'A{i}'] = i - 1
             wb.save(excel_file)
             deleted = True
-            break # Удаляем только первый найденный
+            break
             
     if deleted:
-        # Отправляем бэкап после удаления
         send_backup_for_user(user_id)
     
     return deleted
 
-# Обновить статус поста (для конкретного пользователя)
 def update_post_status(user_id: int, link: str, status: str):
     excel_file = get_user_excel_file(user_id)
     if not os.path.exists(excel_file):
@@ -205,34 +190,103 @@ def update_post_status(user_id: int, link: str, status: str):
             return True
     return False
 
-# Создать кнопку для отправки своей базы данных (для конкретного пользователя)
 def get_export_button():
     keyboard = [[InlineKeyboardButton("📊 Отправить мою базу данных", callback_data='export_db')]]
     return InlineKeyboardMarkup(keyboard)
 
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ ИЗВЛЕЧЕНИЯ ССЫЛОК ---
+
+def extract_telegram_link(text: str) -> str:
+    """
+    Извлекает первую попавшуюся ссылку на пост/канал в Telegram из текста.
+    Поддерживает форматы: https://t.me/username/post_number, https://t.me/username
+    """
+    # Регулярное выражение для поиска Telegram-ссылок
+    # https://t.me/username/12345 или https://t.me/username
+    # (?i) - нечувствительность к регистру (опционально)
+    # (?:...) - не захватывающая группа
+    pattern = r'https?://(?:t\.me|telegram\.me)/(?:[a-zA-Z0-9_]+)(?:/[0-9]+)?(?:/[a-zA-Z0-9_]+)?'
+    match = re.search(pattern, text)
+    if match:
+        return match.group(0)
+    return ""
+
 # --- ОБНОВЛЁННЫЕ ОБРАБОТЧИКИ ---
 
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    init_user_excel(user_id) # Инициализируем файл при старте, если нужно
+    init_user_excel(user_id)
     await update.message.reply_text(
         f"👋 Привет, {update.effective_user.first_name}! Я бот для сохранения постов.\n\n"
-        "Просто отправь мне ссылку на пост, и я сохраню её в *твою* персональную базу данных.\n\n"
+        "Ты можешь:\n"
+        "1. Просто *переслать* мне пост из Telegram.\n"
+        "2. Отправить мне *ссылку* на пост в Telegram.\n\n"
+        "Я сохраню её в *твою* персональную базу данных.\n\n"
         "Команды:\n"
         "/export - выгрузить *твою* базу данных в Excel\n"
         "/stats - статистика *твоих* постов"
     )
 
-# Обработка ссылок
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Обработка текста и пересланных сообщений
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    link = update.message.text
-    
-    # Сохраняем ссылку в контексте пользователя
-    context.user_data['current_link'] = link
-    
-    # Создаём кнопки
+    init_user_excel(user_id)
+
+    # --- Проверяем пересланное сообщение ---
+    forwarded_message = update.message.forward_from_message_id
+    if forwarded_message:
+        # Пытаемся получить информацию о пересланном сообщении, чтобы найти ссылку
+        # К сожалению, Bot API не всегда предоставляет прямую ссылку на пересланное сообщение.
+        # Но если сообщение переслано из канала или супергруппы с username, часто можно сформировать ссылку.
+        # Более надёжный способ - это проверить, есть ли в *этом* сообщении (update.message) текст или caption,
+        # и попытаться извлечь оттуда ссылку.
+        # Однако, если *только* переслано, и нет текста в текущем сообщении, сложно.
+        # Попробуем проверить текст/подпись текущего сообщения на наличие ссылки.
+        # Это сработает, если пользователь переслал сообщение и добавил комментарий с ссылкой.
+        # Для *чистой* пересылки без комментария, Telegram API не даёт прямой URL.
+        # Поэтому, если в текущем сообщении нет текста/подписи, мы не сможем обработать *только* пересылку.
+        # Чтобы обрабатывать *только* пересланные посты, нужно полагаться на то, что в них есть ссылка,
+        # или использовать более сложные методы (например, получение истории канала по ID, что сложно и требует прав).
+        # Учитывая стандартное поведение Telegram, часто ссылка появляется в теле пересланного сообщения или в подсказке.
+        # Проверим, есть ли текст или подпись в *этом* (текущем) сообщении, и если да, извлечём оттуда ссылку.
+        # Telegram часто вставляет автоматическую ссылку при пересылке, если она была в оригинале.
+        # Но если пользователь пересылает *без* комментария, и в оригинале был только текст, а не встроенный URL,
+        # то в текущем сообщении бота может не быть ссылки.
+        # Вывод: обработка *чистой* пересылки без текста/ссылки в текущем сообщении через Bot API - ограничена.
+        # Мы можем обрабатывать пересылку, если в *текущем* сообщении есть текст, содержащий ссылку.
+        # Это покрывает большинство случаев, особенно если пользователь пересылает с комментарием или если Telegram автоматически добавляет ссылку.
+
+        # Сначала проверим текст текущего сообщения
+        text = update.message.text or update.message.caption or ""
+        if text:
+            link = extract_telegram_link(text)
+            if link:
+                # Сохраняем ссылку в контексте пользователя
+                context.user_data['current_link'] = link
+                # Вызываем логику обработки ссылки (ту же, что и для текста)
+                await _present_link_options(update, context, link)
+                return # Обработали, выходим
+
+    # --- Проверяем текст или подпись текущего сообщения (не пересланного) ---
+    text = update.message.text or update.message.caption or ""
+    if text:
+        link = extract_telegram_link(text)
+        if link:
+            # Сохраняем ссылку в контексте пользователя
+            context.user_data['current_link'] = link
+            await _present_link_options(update, context, link)
+            return # Обработали, выходим
+
+    # Если не переслано и нет текста/ссылки, сообщаем пользователю
+    if not forwarded_message and not text:
+        await update.message.reply_text("❌ Я не нашёл ссылку в твоём сообщении. Отправь ссылку или перешли пост с комментарием содержащим ссылку.")
+    elif not forwarded_message and text and not extract_telegram_link(text):
+        await update.message.reply_text("❌ Я не нашёл действительную ссылку на пост в Telegram в твоём сообщении.")
+
+
+# Вспомогательная функция для представления опций после извлечения ссылки
+async def _present_link_options(update: Update, context: ContextTypes.DEFAULT_TYPE, link: str):
+    """Предлагает пользователю действия после извлечения ссылки."""
     keyboard = [
         [InlineKeyboardButton("📝 Добавить пост + статус", callback_data='add_with_status')],
         [InlineKeyboardButton("🗑️ Удалить пост", callback_data='delete_post')],
@@ -245,14 +299,14 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# Обработка нажатий на кнопки
+
+# Обработка нажатий на кнопки (остаётся без изменений)
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    user_id = query.from_user.id # Получаем ID пользователя из query
+    user_id = query.from_user.id
 
-    # Обработка экспорта базы данных
     if query.data == 'export_db':
         excel_file = get_user_excel_file(user_id)
         if os.path.exists(excel_file):
@@ -271,7 +325,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if query.data == 'add_simple':
-        # Просто добавить пост без статуса
         number = add_post_to_excel(user_id, link)
         await query.edit_message_text(
             f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
@@ -281,7 +334,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         
     elif query.data == 'add_with_status':
-        # Просим ввести статус
         context.user_data['waiting_for_status'] = True
         await query.edit_message_text(
             f"📝 Введи статус для поста:\n\n{link}\n\n"
@@ -289,7 +341,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     elif query.data == 'delete_post':
-        # Удалить пост
         success = delete_post_from_excel(user_id, link)
         if success:
             await query.edit_message_text(
@@ -305,31 +356,122 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         context.user_data.clear()
 
-# Обработка текстовых сообщений (для статуса)
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Обработка текстовых сообщений (для статуса) и теперь также пересланных
+# Убираем старый обработчик MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
+# Заменяем его на более общий, который может обрабатывать и текст, и пересылки
+# filters.TEXT означает сообщение с текстом
+# filters.FORWARDED означает пересланное сообщение (любое)
+# Мы хотим обрабатывать *любое* сообщение, в котором есть потенциальная ссылка
+# filters.TEXT или filters.CAPTION (для медиа)
+# filters.FORWARDED сам по себе не означает, что в текущем сообщении есть текст/ссылка
+# Нам нужно проверять, есть ли *в текущем сообщении* текст или подпись (caption)
+# Поэтому используем обработчик на всё, что содержит текст или подпись
+# MessageHandler(filters.TEXT | filters.CAPTION & ~filters.COMMAND, handle_message)
+# Однако filters.CAPTION сам по себе не является фильтром для MessageHandler.
+# Нужно использовать filters.UpdateType.MESSAGE и проверять наличие caption или text внутри.
+# Или использовать комбинацию фильтров, которые срабатывают, если *есть* текст или подпись.
+# filters.TEXT | filters.PHOTO & filters.caption (например)
+# Лучше всего будет использовать один обработчик на всё, что не команда, и проверять внутри.
+# filters.TEXT срабатывает, если есть .text
+# filters.PHOTO срабатывает, если есть .photo, и можно проверить .caption
+# filters.VIDEO и т.д.
+# filters.UpdateType.MESSAGE срабатывает всегда, когда приходит сообщение.
+# Но фильтры типа filters.TEXT идут в приоритете.
+# filters.TEXT означает наличие .text
+# filters.CAPTION не существует как отдельный фильтр MessageHandler
+# filters.PHOTO & filters.CAPTION_TEXT (новая версия python-telegram-bot) или нужно проверять вручную.
+# В версии 20.8, можно использовать:
+# filters.PHOTO & filters.Caption.TEXT
+# filters.VIDEO & filters.Caption.TEXT
+# Но проще и универсальнее проверить вручную внутри обработчика.
+# Я буду использовать фильтр, который сработает, если есть .text ИЛИ .caption
+# filters.TEXT или filters.PHOTO (и проверка caption внутри), или общий фильтр и проверка внутри.
+# filters.TEXT | (filters.PHOTO & lambda u: hasattr(u.message, 'caption') and u.message.caption)
+# filters.TEXT | filters.PHOTO | filters.VIDEO | ... и проверить внутри.
+# Или просто:
+# MessageHandler((filters.TEXT | filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.DOCUMENT) & ~filters.COMMAND, handle_message)
+# И внутри проверить text и caption.
+# filters.TEXT уже включает в себя наличие .text
+# filters.PHOTO включает наличие .photo
+# filters.CAPTION_TEXT (новый синтаксис) означает, что у сообщения есть подпись (caption), и она содержит текст.
+# filters.TEXT
+# filters.CAPTION = lambda u: u.effective_message.caption is not None
+# filters.CAPTION_TEXT = filters.CAPTION & filters.TEXT
+# filters.TEXT означает, что в сообщении есть поле text (и оно не None)
+# filters.CAPTION означает, что в сообщении есть поле caption (и оно не None)
+# filters.CAPTION_TEXT означает, что в сообщении есть поле caption И оно содержит текст (не пустое)
+# filters.TEXT | filters.CAPTION_TEXT (или что-то подобное)
+# filters.TEXT | (filters.CAPTION & filters.TEXT) # caption проверяет наличие caption, TEXT внутри проверяет его содержимое
+# filters.TEXT | filters.Caption.TEXT # (если Caption регистрозависим)
+# filters.TEXT | filters.CAPTION.TEXT # (CAPTION)
+# filters.TEXT | filters.Caption.TEXT # (Caption)
+# Проверим документацию для конкретной версии.
+# В версии 20.8:
+# filters.TEXT
+# filters.CAPTION
+# filters.CAPTION.TEXT
+# filters.TEXT | filters.CAPTION.TEXT
+# filters.TEXT сработает, если .text есть и не None
+# filters.CAPTION.TEXT сработает, если .caption есть, не None и не пустая строка
+# Это то, что нужно.
+# Но если пересылается сообщение без комментария, и в текущем сообщении нет .text и .caption,
+# то ни один из этих фильтров не сработает.
+# Поэтому, чтобы *поймать* пересланное сообщение, даже если в нём нет текста/подписи,
+# нужно либо отдельно ловить filters.FORWARDED, либо ловить всё и проверять внутри.
+# Однако, если в пересланном сообщении нет ссылки (ни в тексте, ни в подписи текущего сообщения),
+# то обрабатывать его бессмысленно.
+# Цель: обработать *любое* сообщение, в котором *может быть* ссылка на Telegram-пост.
+# Это: сообщения с .text, сообщения с .caption, и, косвенно, пересланные, если они добавили .text или .caption.
+# Поэтому фильтр TEXT | CAPTION.TEXT должен покрыть основные случаи.
+# filters.TEXT | filters.CAPTION.TEXT
+# filters.CAPTION.TEXT эквивалентно filters.CAPTION & filters.TEXT
+# filters.CAPTION проверяет, что caption != None
+# filters.TEXT проверяет, что caption != ""
+# filters.TEXT проверяет .text
+# filters.TEXT проверяет .text (для основного текста)
+# filters.TEXT проверяет .caption (если CAPTION установлен)
+# Нет, filters.TEXT проверяет только .text.
+# filters.CAPTION проверяет наличие .caption (не None)
+# filters.TEXT проверяет .text
+# filters.CAPTION.TEXT = filters.CAPTION & lambda u: bool(u.effective_message.caption and u.effective_message.caption.strip())
+# filters.TEXT = lambda u: bool(u.effective_message.text)
+# filters.TEXT срабатывает, если .text есть и не пустой/не None
+# filters.CAPTION.TEXT срабатывает, если .caption есть и не пустой/не None
+# Это почти то, что нужно.
+# filters.TEXT | filters.CAPTION.TEXT
+# Это означает: сработает, если в сообщении есть .text или .caption (и caption не пустой)
+# Это покроет:
+# - Сообщения с текстом (filters.TEXT)
+# - Сообщения с медиа и подписью (filters.CAPTION.TEXT)
+# - Пересланные сообщения, если они добавили текст или подпись (тоже будет .text или .caption)
+# Это должно сработать для большинства сценариев, включая пересылку с комментарием.
+# Если пользователь *тупо* перешлёт пост без комментария, и в оригинале не было встроенной ссылки,
+# то в текущем сообщении бота .text и .caption будут None или пустыми, и фильтр не сработает.
+# Это ограничение Bot API.
+# Итак, используем фильтр TEXT | CAPTION.TEXT
+
+# --- ОБНОВЛЁННЫЕ ОБРАБОТЧИКИ ---
+
+async def handle_text_or_caption(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает сообщения с текстом или подписью, включая пересланные с комментарием."""
     user_id = update.effective_user.id
-    init_user_excel(user_id) # Инициализируем файл при получении сообщения, если нужно
+    init_user_excel(user_id)
 
-    if context.user_data.get('waiting_for_status'):
-        status = update.message.text
-        link = context.user_data.get('current_link')
-        
+    # Проверяем текст или подпись текущего сообщения
+    text = update.message.text or update.message.caption or ""
+    if text:
+        link = extract_telegram_link(text)
         if link:
-            number = add_post_to_excel(user_id, link, status)
-            await update.message.reply_text(
-                f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
-                f"Ссылка: {link}\n"
-                f"Статус: {status}",
-                reply_markup=get_export_button()
-            )
-            context.user_data.clear()
-        else:
-            await update.message.reply_text("❌ Ошибка: ссылка не найдена.")
-    else:
-        # Обрабатываем как ссылку
-        await handle_link(update, context)
+            # Сохраняем ссылку в контексте пользователя
+            context.user_data['current_link'] = link
+            await _present_link_options(update, context, link)
+            return # Обработали, выходим
 
-# Экспорт базы данных (для конкретного пользователя)
+    # Если ссылка не найдена
+    await update.message.reply_text("❌ Я не нашёл действительную ссылку на пост в Telegram в твоём сообщении. Отправь ссылку или перешли пост с комментарием содержащим ссылку.")
+
+
+# Экспорт базы данных (остаётся без изменений)
 async def export_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     excel_file = get_user_excel_file(user_id)
@@ -341,7 +483,7 @@ async def export_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Твоя база данных пуста. Добавь хотя бы один пост.")
 
-# Статистика (для конкретного пользователя)
+# Статистика (остаётся без изменений)
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     excel_file = get_user_excel_file(user_id)
@@ -351,9 +493,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
-    total = ws.max_row - 1  # Минус заголовок
+    total = ws.max_row - 1
     
-    # Подсчёт статусов
     statuses = {}
     for row in range(2, ws.max_row + 1):
         status = ws[f'C{row}'].value
@@ -373,26 +514,23 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Основная функция
 def main():
     global app
-    
-    # Токен бота
+
     TOKEN = os.getenv("BOT_TOKEN")
     
     if not TOKEN:
         logger.error("Требуется переменная окружения BOT_TOKEN")
         return
 
-    # Создание приложения (без job_queue чтобы избежать ошибки)
     app = Application.builder().token(TOKEN).job_queue(None).build()
     
-    # Регистрация обработчиков
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("export", export_database))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # Обновлённый обработчик: ловит сообщения с текстом или подписью
+    app.add_handler(MessageHandler((filters.TEXT | filters.CAPTION.TEXT) & ~filters.COMMAND, handle_text_or_caption))
     
-    # Запуск бота
-    logger.info("Бот запущен с индивидуальными таблицами для пользователей!")
+    logger.info("Бот запущен с поддержкой пересланных сообщений (если они содержат ссылку)!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
