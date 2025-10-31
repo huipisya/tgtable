@@ -247,6 +247,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     user_id = query.from_user.id
+
+    # --- Проверка: это нажатие на кнопку экспорта? ---
+    if query.data == 'export_db':
+        excel_file = get_user_excel_file(user_id)
+        if os.path.exists(excel_file):
+            await query.message.reply_document(
+                document=open(excel_file, 'rb'),
+                filename=f'my_posts_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+            )
+        else:
+            await query.edit_message_text("❌ Твоя база данных пуста. Добавь хотя бы один пост.")
+        return # ВАЖНО: выходим, чтобы не продолжать выполнение остальной логики
+
+    # --- Если это не экспорт, значит это выбор времени публикации ---
     link = context.user_data.get('current_link')
 
     if not link:
@@ -279,7 +293,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Очищаем контекст в случае ошибки тоже
             context.user_data.pop('current_link', None)
     else:
-        # Если кнопка не распознана
+        # Если кнопка не распознана (не status_1,2,3,4 и не export_db)
         await query.edit_message_text("❌ Неизвестная команда. Попробуй снова.")
         # Очищаем контекст, чтобы не мешал
         context.user_data.pop('current_link', None)
@@ -339,7 +353,7 @@ def main():
     app.add_handler(CommandHandler("export", export_database))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CallbackQueryHandler(button_handler))
-    # Обработчик для всех сообщений, кроме команд
+    # Обработчик для всех сообщений,  кроме команд
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     
     logger.info("Бот запущен с показом кнопок времени публикации!")
