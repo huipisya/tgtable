@@ -333,7 +333,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Мы не можем редактировать *предыдущее* сообщение (где были кнопки времени), а только ответить.
             # Поэтому отправим новое сообщение с кнопками.
             await query.message.reply_text(
-                f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
+                f"✅ Пост #{number} добавлен в твою базу данных!\n\n"
                 f"Ссылка: {link}\n"
                 f"Статус: {selected_status}",
                 reply_markup=reply_markup
