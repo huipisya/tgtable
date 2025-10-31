@@ -13,23 +13,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Имя файла Excel
-# Используем переменную окружения для пути к постоянному хранилищу
-DATA_DIR = os.getenv('DATA_DIR', '.')
-EXCEL_FILE = os.path.join(DATA_DIR, 'posts_database.xlsx')
+# Имя директории для хранения файлов пользователей
+# Используем переменную окружения для пути к постоянному хранилищу, по умолчанию 'user_data'
+DATA_DIR = os.getenv('DATA_DIR', 'user_data')
+# Убедимся, что директория существует
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# ID чата для бэкапа
+# ID чата для бэкапа (один на всех, или можно сделать индивидуально, если нужно)
 BACKUP_CHAT_ID = os.getenv('BACKUP_CHAT_ID')
 
 # Глобальная переменная для application
 app = None
 
-# Инициализация Excel файла
-def init_excel():
-    # Создаем директорию если её нет
-    os.makedirs(DATA_DIR, exist_ok=True)
+# --- ФУНКЦИИ РАБОТЫ С ИНДИВИДУАЛЬНЫМИ ФАЙЛАМИ ---
+
+def get_user_excel_file(user_id: int) -> str:
+    """Возвращает путь к Excel-файлу конкретного пользователя."""
+    # Имя файла: user_{user_id}.xlsx
+    return os.path.join(DATA_DIR, f'user_{user_id}.xlsx')
+
+def init_user_excel(user_id: int):
+    """Инициализирует Excel-файл для конкретного пользователя, если его нет."""
+    excel_file = get_user_excel_file(user_id)
     
-    if not os.path.exists(EXCEL_FILE):
+    if not os.path.exists(excel_file):
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         
         wb = Workbook()
@@ -65,34 +72,59 @@ def init_excel():
         ws.column_dimensions['C'].width = 20  # Статус
         ws.column_dimensions['D'].width = 22  # Дата
         
-        wb.save(EXCEL_FILE)
-        logger.info("Создан новый Excel файл")
+        wb.save(excel_file)
+        logger.info(f"Создан новый Excel файл для пользователя {user_id}")
 
-# Отправить бэкап в указанный чат
-async def send_backup():
-    if BACKUP_CHAT_ID and os.path.exists(EXCEL_FILE):
-        try:
-            with open(EXCEL_FILE, 'rb') as f:
-                await app.bot.send_document(
-                    chat_id=BACKUP_CHAT_ID,
-                    document=f,
-                    filename=f'backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-                )
-            logger.info("Бэкап отправлен успешно")
-        except Exception as e:
-            logger.error(f"Ошибка отправки бэкапа: {e}")
+def send_backup_for_user(user_id: int):
+    """Отправить бэкап индивидуального файла пользователя в указанный чат."""
+    if BACKUP_CHAT_ID:
+        excel_file = get_user_excel_file(user_id)
+        if os.path.exists(excel_file):
+            try:
+                # Отправляем файл напрямую, используя file_id или file_path
+                # В polling режиме нужно открыть файл для отправки
+                import asyncio
+                async def _send():
+                    try:
+                        with open(excel_file, 'rb') as f:
+                            await app.bot.send_document(
+                                chat_id=BACKUP_CHAT_ID,
+                                document=f,
+                                filename=f'backup_user_{user_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+                            )
+                        logger.info(f"Бэкап для пользователя {user_id} отправлен успешно")
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки бэкапа для пользователя {user_id}: {e}")
 
-# Получить следующий номер для поста
-def get_next_number():
-    wb = openpyxl.load_workbook(EXCEL_FILE)
+                # Создаём задачу для асинхронной отправки
+                asyncio.create_task(_send())
+            except Exception as e:
+                logger.error(f"Ошибка подготовки бэкапа для пользователя {user_id}: {e}")
+        else:
+            logger.warning(f"Файл для бэкапа пользователя {user_id} не найден.")
+
+
+# --- ОБНОВЛЁННЫЕ ФУНКЦИИ РАБОТЫ С EXCEL ---
+
+# Получить следующий номер для поста (для конкретного пользователя)
+def get_next_number(user_id: int):
+    excel_file = get_user_excel_file(user_id)
+    if not os.path.exists(excel_file):
+        init_user_excel(user_id) # Убедимся, что файл существует
+
+    wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
     return ws.max_row  # Вернёт номер следующей строки
 
-# Добавить пост в Excel
-def add_post_to_excel(link, status=None):
+# Добавить пост в Excel (для конкретного пользователя)
+def add_post_to_excel(user_id: int, link: str, status=None):
     from openpyxl.styles import Alignment, Border, Side
     
-    wb = openpyxl.load_workbook(EXCEL_FILE)
+    excel_file = get_user_excel_file(user_id)
+    if not os.path.exists(excel_file):
+        init_user_excel(user_id) # Убедимся, что файл существует
+
+    wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
     row = ws.max_row + 1
     number = row - 1  # Минус заголовок
@@ -111,7 +143,7 @@ def add_post_to_excel(link, status=None):
     # Добавляем ссылку как гиперссылку
     ws[f'B{row}'].hyperlink = link
     ws[f'B{row}'].value = link
-    ws[f'B{row}'].style = "Hyperlink"
+    ws[f'B{row}'].style = "Hyperlink" # Note: openpyxl не сохраняет стиль Hyperlink в Excel, но значение и гиперссылка будут
     ws[f'B{row}'].border = thin_border
     
     ws[f'C{row}'] = status if status else ""
@@ -122,18 +154,23 @@ def add_post_to_excel(link, status=None):
     ws[f'D{row}'].alignment = Alignment(horizontal="center", vertical="center")
     ws[f'D{row}'].border = thin_border
     
-    wb.save(EXCEL_FILE)
+    wb.save(excel_file)
     
     # Отправляем бэкап после добавления
-    import asyncio
-    asyncio.create_task(send_backup())
+    send_backup_for_user(user_id)
     
     return number
 
-# Удалить пост из Excel по ссылке
-def delete_post_from_excel(link):
-    wb = openpyxl.load_workbook(EXCEL_FILE)
+# Удалить пост из Excel по ссылке (для конкретного пользователя)
+def delete_post_from_excel(user_id: int, link: str):
+    excel_file = get_user_excel_file(user_id)
+    if not os.path.exists(excel_file):
+        logger.warning(f"Попытка удаления из несуществующего файла для пользователя {user_id}")
+        return False
+
+    wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
+    deleted = False
     
     for row in range(2, ws.max_row + 1):
         if ws[f'B{row}'].value == link:
@@ -141,44 +178,55 @@ def delete_post_from_excel(link):
             # Перенумеровать все посты после удаления
             for i in range(row, ws.max_row + 1):
                 ws[f'A{i}'] = i - 1
-            wb.save(EXCEL_FILE)
+            wb.save(excel_file)
+            deleted = True
+            break # Удаляем только первый найденный
             
-            # Отправляем бэкап после удаления
-            import asyncio
-            asyncio.create_task(send_backup())
-            
-            return True
-    return False
+    if deleted:
+        # Отправляем бэкап после удаления
+        send_backup_for_user(user_id)
+    
+    return deleted
 
-# Обновить статус поста
-def update_post_status(link, status):
-    wb = openpyxl.load_workbook(EXCEL_FILE)
+# Обновить статус поста (для конкретного пользователя)
+def update_post_status(user_id: int, link: str, status: str):
+    excel_file = get_user_excel_file(user_id)
+    if not os.path.exists(excel_file):
+        logger.warning(f"Попытка обновления статуса в несуществующем файле для пользователя {user_id}")
+        return False
+
+    wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
     
     for row in range(2, ws.max_row + 1):
         if ws[f'B{row}'].value == link:
             ws[f'C{row}'] = status
-            wb.save(EXCEL_FILE)
+            wb.save(excel_file)
             return True
     return False
 
-# Создать кнопку для отправки базы данных
+# Создать кнопку для отправки своей базы данных (для конкретного пользователя)
 def get_export_button():
-    keyboard = [[InlineKeyboardButton("📊 Отправить актуальную базу данных", callback_data='export_db')]]
+    keyboard = [[InlineKeyboardButton("📊 Отправить мою базу данных", callback_data='export_db')]]
     return InlineKeyboardMarkup(keyboard)
+
+# --- ОБНОВЛЁННЫЕ ОБРАБОТЧИКИ ---
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    init_user_excel(user_id) # Инициализируем файл при старте, если нужно
     await update.message.reply_text(
-        "👋 Привет! Я бот для сохранения постов.\n\n"
-        "Просто отправь мне ссылку на пост, и я сохраню её в базу данных.\n\n"
+        f"👋 Привет, {update.effective_user.first_name}! Я бот для сохранения постов.\n\n"
+        "Просто отправь мне ссылку на пост, и я сохраню её в *твою* персональную базу данных.\n\n"
         "Команды:\n"
-        "/export - выгрузить базу данных в Excel\n"
-        "/stats - статистика"
+        "/export - выгрузить *твою* базу данных в Excel\n"
+        "/stats - статистика *твоих* постов"
     )
 
 # Обработка ссылок
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     link = update.message.text
     
     # Сохраняем ссылку в контексте пользователя
@@ -202,15 +250,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    user_id = query.from_user.id # Получаем ID пользователя из query
+
     # Обработка экспорта базы данных
     if query.data == 'export_db':
-        if os.path.exists(EXCEL_FILE):
+        excel_file = get_user_excel_file(user_id)
+        if os.path.exists(excel_file):
             await query.message.reply_document(
-                document=open(EXCEL_FILE, 'rb'),
-                filename=f'posts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+                document=open(excel_file, 'rb'),
+                filename=f'my_posts_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
             )
         else:
-            await query.edit_message_text("❌ База данных пуста. Добавь хотя бы один пост.")
+            await query.edit_message_text("❌ Твоя база данных пуста. Добавь хотя бы один пост.")
         return
     
     link = context.user_data.get('current_link')
@@ -221,9 +272,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == 'add_simple':
         # Просто добавить пост без статуса
-        number = add_post_to_excel(link)
+        number = add_post_to_excel(user_id, link)
         await query.edit_message_text(
-            f"✅ Пост #{number} добавлен в базу данных!\n\n"
+            f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
             f"Ссылка: {link}",
             reply_markup=get_export_button()
         )
@@ -239,24 +290,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     elif query.data == 'delete_post':
         # Удалить пост
-        delete_post_from_excel(link)
-        await query.edit_message_text(
-            f"🗑️ Пост удалён из базы данных!\n\n"
-            f"Ссылка: {link}",
-            reply_markup=get_export_button()
-        )
+        success = delete_post_from_excel(user_id, link)
+        if success:
+            await query.edit_message_text(
+                f"🗑️ Пост удалён из *твоей* базы данных!\n\n"
+                f"Ссылка: {link}",
+                reply_markup=get_export_button()
+            )
+        else:
+            await query.edit_message_text(
+                f"❌ Не удалось удалить пост. Возможно, его уже нет в базе.\n\n"
+                f"Ссылка: {link}",
+                reply_markup=get_export_button()
+            )
         context.user_data.clear()
 
 # Обработка текстовых сообщений (для статуса)
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    init_user_excel(user_id) # Инициализируем файл при получении сообщения, если нужно
+
     if context.user_data.get('waiting_for_status'):
         status = update.message.text
         link = context.user_data.get('current_link')
         
         if link:
-            number = add_post_to_excel(link, status)
+            number = add_post_to_excel(user_id, link, status)
             await update.message.reply_text(
-                f"✅ Пост #{number} добавлен в базу данных!\n\n"
+                f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
                 f"Ссылка: {link}\n"
                 f"Статус: {status}",
                 reply_markup=get_export_button()
@@ -268,23 +329,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Обрабатываем как ссылку
         await handle_link(update, context)
 
-# Экспорт базы данных
+# Экспорт базы данных (для конкретного пользователя)
 async def export_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if os.path.exists(EXCEL_FILE):
+    user_id = update.effective_user.id
+    excel_file = get_user_excel_file(user_id)
+    if os.path.exists(excel_file):
         await update.message.reply_document(
-            document=open(EXCEL_FILE, 'rb'),
-            filename=f'posts_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+            document=open(excel_file, 'rb'),
+            filename=f'my_posts_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
         )
     else:
-        await update.message.reply_text("❌ База данных пуста. Добавь хотя бы один пост.")
+        await update.message.reply_text("❌ Твоя база данных пуста. Добавь хотя бы один пост.")
 
-# Статистика
+# Статистика (для конкретного пользователя)
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not os.path.exists(EXCEL_FILE):
-        await update.message.reply_text("📊 База данных пуста.")
+    user_id = update.effective_user.id
+    excel_file = get_user_excel_file(user_id)
+    if not os.path.exists(excel_file):
+        await update.message.reply_text("📊 Твоя база данных пуста.")
         return
     
-    wb = openpyxl.load_workbook(EXCEL_FILE)
+    wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
     total = ws.max_row - 1  # Минус заголовок
     
@@ -295,7 +360,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if status:
             statuses[status] = statuses.get(status, 0) + 1
     
-    message = f"📊 Статистика базы данных:\n\n"
+    message = f"📊 Статистика *твоих* постов:\n\n"
     message += f"Всего постов: {total}\n\n"
     
     if statuses:
@@ -309,13 +374,14 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     global app
     
-    # Инициализация Excel
-    init_excel()
-    
     # Токен бота
     TOKEN = os.getenv("BOT_TOKEN")
     
-    # Создание приложения (без job_queue  чтобы избежать ошибки)
+    if not TOKEN:
+        logger.error("Требуется переменная окружения BOT_TOKEN")
+        return
+
+    # Создание приложения (без job_queue чтобы избежать ошибки)
     app = Application.builder().token(TOKEN).job_queue(None).build()
     
     # Регистрация обработчиков
@@ -326,7 +392,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     # Запуск бота
-    logger.info("Бот запущен!")
+    logger.info("Бот запущен с индивидуальными таблицами для пользователей!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
