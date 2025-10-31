@@ -258,7 +258,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.edit_message_text("❌ Твоя база данных пуста. Добавь хотя бы один пост.")
-        return # ВАЖНО: выходим, чтобы не продолжать выполнение остальной логики
+        return  # <--- ВАЖНО: выходим здесь, чтобы не продолжать выполнение
 
     # --- Если это не экспорт, значит это выбор времени публикации ---
     link = context.user_data.get('current_link')
@@ -341,7 +341,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     global app
 
-    TOKEN = os.getenv("BOT_TOKEN")
+    TOKEN = os.getenv("BOT_TOKEN")# Обработка нажатий на кнопки
     
     if not TOKEN:
         logger.error("Требуется переменная окружения BOT_TOKEN")
