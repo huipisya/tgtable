@@ -3,7 +3,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import openpyxl
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import os
 import re
 from datetime import datetime
@@ -26,7 +25,6 @@ BACKUP_CHAT_ID = os.getenv('BACKUP_CHAT_ID')
 app = None
 
 # --- ФУНКЦИИ РАБОТЫ С ИНДИВИДУАЛЬНЫМИ ФАЙЛАМИ ---
-
 def get_user_excel_file(user_id: int) -> str:
     return os.path.join(DATA_DIR, f'user_{user_id}.xlsx')
 
@@ -34,6 +32,8 @@ def init_user_excel(user_id: int):
     excel_file = get_user_excel_file(user_id)
     
     if not os.path.exists(excel_file):
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
         wb = Workbook()
         ws = wb.active
         ws.title = "Посты"
@@ -60,7 +60,7 @@ def init_user_excel(user_id: int):
         
         ws.column_dimensions['A'].width = 8
         ws.column_dimensions['B'].width = 60
-        ws.column_dimensions['C'].width = 30 # Увеличено для длинных статусов
+        ws.column_dimensions['C'].width = 30
         ws.column_dimensions['D'].width = 22
         
         wb.save(excel_file)
@@ -91,7 +91,6 @@ def send_backup_for_user(user_id: int):
             logger.warning(f"Файл для бэкапа пользователя {user_id} не найден.")
 
 # --- ОБНОВЛЁННЫЕ ФУНКЦИИ РАБОТЫ С EXCEL ---
-
 def get_next_number(user_id: int):
     excel_file = get_user_excel_file(user_id)
     if not os.path.exists(excel_file):
@@ -101,6 +100,8 @@ def get_next_number(user_id: int):
     return ws.max_row
 
 def add_post_to_excel(user_id: int, link: str, status=None):
+    from openpyxl.styles import Alignment, Border, Side, Font # Импортируем Font
+    
     excel_file = get_user_excel_file(user_id)
     if not os.path.exists(excel_file):
         init_user_excel(user_id)
@@ -123,10 +124,11 @@ def add_post_to_excel(user_id: int, link: str, status=None):
     
     # --- ИЗМЕНЕНИЕ: Добавляем кликабельную ссылку ---
     ws[f'B{row}'].value = link
-    ws[f'B{row}'].hyperlink = link
-    ws[f'B{row}'].font = Font(color="0563C1", underline="single")
+    ws[f'B{row}'].hyperlink = link # Установка гиперссылки
+    # Применяем стиль, чтобы выглядело как гиперссылка
+    ws[f'B{row}'].font = Font(color="0563C1", underline="single") # Стандартный цвет и стиль гиперссылки
     ws[f'B{row}'].border = thin_border
-    # --- /ИЗМЕНЕНИЕ ---
+    # --- /ИЗМЕНЕНИЕ --
     
     ws[f'C{row}'] = status if status else ""
     ws[f'C{row}'].alignment = Alignment(horizontal="center", vertical="center")
@@ -180,7 +182,7 @@ def update_post_status(user_id: int, link: str, status: str):
             return True
     return False
 
-# --- ПРОВЕРКА НАЛИЧИЯ ССЫЛКИ ---
+# --- НОВАЯ ФУНКЦИЯ: проверка, есть ли ссылка в базе ---
 def link_exists_in_excel(user_id: int, link: str) -> bool:
     excel_file = get_user_excel_file(user_id)
     if not os.path.exists(excel_file):
@@ -189,7 +191,7 @@ def link_exists_in_excel(user_id: int, link: str) -> bool:
     wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
 
-    for row in range(2, ws.max_row + 1):
+    for row in range(2, ws.max_row + 1): # Начинаем с 2, пропускаем заголовок
         if ws[f'B{row}'].value == link:
             return True
     return False
@@ -227,7 +229,6 @@ def extract_telegram_link(text: str) -> str:
     return ""
 
 # --- ОБНОВЛЁННЫЕ ОБРАБОТЧИКИ ---
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     init_user_excel(user_id)
@@ -239,38 +240,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats - статистика *твоих* постов"
     )
 
+# Обработка сообщений (любых, кроме команд) — главная логика
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     init_user_excel(user_id)
 
-    # Проверяем, есть ли пересланное сообщение из канала/супергруппы с username
-    if update.message.forward_from_chat:
-        chat = update.message.forward_from_chat
-        message_id = update.message.forward_from_message_id
-
-        if chat.username and message_id:
-            link = f"https://t.me/{chat.username}/{message_id}"
-            context.user_data['current_link'] = link
-            if link_exists_in_excel(user_id, link):
-                reply_markup = get_delete_or_new_link_keyboard()
-                await update.message.reply_text(
-                    f"⚠️ Ссылка уже есть в базе данных!\n\nСсылка: {link}\n\nВыбери действие:",
-                    reply_markup=reply_markup
-                )
-            else:
-                reply_markup = get_time_options_keyboard()
-                await update.message.reply_text(
-                    f"📌 Пост получен!\n\nСсылка: {link}\n\nКогда он вышел?",
-                    reply_markup=reply_markup
-                )
-            return
-
-    # Если не переслано из чата с username, проверяем текст
+    # Проверяем текст или подпись текущего сообщения
     text = update.message.text or update.message.caption or ""
     if text:
         link = extract_telegram_link(text)
         if link:
+            # Проверяем, есть ли ссылка уже в базе
             if link_exists_in_excel(user_id, link):
+                # Ссылка уже есть, показываем кнопки удалить/новая
                 context.user_data['current_link'] = link
                 reply_markup = get_delete_or_new_link_keyboard()
                 await update.message.reply_text(
@@ -278,6 +260,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=reply_markup
                 )
             else:
+                # Ссылка новая, сохраняем и показываем кнопки времени
                 context.user_data['current_link'] = link
                 reply_markup = get_time_options_keyboard()
                 await update.message.reply_text(
@@ -285,22 +268,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=reply_markup
                 )
         else:
+            # Ссылка не найдена — отправляем сообщение об ошибке
             await update.message.reply_text(
                 "❌ Я не нашёл действительную ссылку на пост в Telegram в твоём сообщении.\n\n"
-                "Отправь ссылку, перешли пост из канала/группы (с username) или отправь медиа с подписью содержащей ссылку."
+                "Отправь ссылку, перешли пост с комментарием или отправь медиа с подписью содержащей ссылку."
             )
     else:
+        # Сообщение пустое (например, только пересылка без текста/подписи)
         await update.message.reply_text(
             "❌ Я не нашёл действительную ссылку на пост в Telegram в твоём сообщении.\n\n"
-            "Отправь ссылку, перешли пост из канала/группы (с username) или отправь медиа с подписью содержащей ссылку."
+            "Отправь ссылку, перешли пост с комментарием или отправь медиа с подписью содержащей ссылку."
         )
 
+# Обработка нажатий на кнопки
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     user_id = query.from_user.id
 
+    # --- Проверка: это нажатие на кнопку экспорта? ---
     if query.data == 'export_db':
         excel_file = get_user_excel_file(user_id)
         if os.path.exists(excel_file):
@@ -310,18 +297,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.edit_message_text("❌ Твоя база данных пуста. Добавь хотя бы один пост.")
-        return
+        return  # ВАЖНО: выходим здесь, чтобы не продолжать выполнение
 
+    # --- Проверка: это нажатие "Отправить новую ссылку"? ---
     if query.data == 'new_link':
+        # Очищаем контекст и возвращаемся к ожиданию
         context.user_data.pop('current_link', None)
         await query.edit_message_text("✅ Готов принять новую ссылку. Отправь её сюда.")
-        return
+        return # ВАЖНО: выходим
 
+    # --- Проверка: это нажатие "Удалить этот пост"? ---
     if query.data == 'delete_current':
         link = context.user_data.get('current_link')
         if link:
             success = delete_post_from_excel(user_id, link)
             if success:
+                # После удаления отправляем файл
                 excel_file = get_user_excel_file(user_id)
                 if os.path.exists(excel_file):
                     await query.message.reply_document(
@@ -334,15 +325,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Не удалось удалить пост. Возможно, его уже нет.")
         else:
             await query.edit_message_text("❌ Ошибка: ссылка не найдена для удаления.")
+        # В любом случае, очищаем контекст после удаления
         context.user_data.pop('current_link', None)
-        return
+        return # ВАЖНО: выходим
 
+    # --- Если это не экспорт, не новая ссылка, не удаление, значит выбор времени ---
     link = context.user_data.get('current_link')
 
     if not link:
         await query.edit_message_text("❌ Ошибка: ссылка не найдена. Отправь ссылку заново.")
         return
 
+    # Определяем статус на основе нажатой кнопки
     status_mapping = {
         'status_1': "Вышли первыми",
         'status_2': "Вышли в течение часа",
@@ -354,6 +348,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if selected_status:
         try:
             number = add_post_to_excel(user_id, link, selected_status)
+            # После добавления, отправляем файл
             excel_file = get_user_excel_file(user_id)
             if os.path.exists(excel_file):
                 await query.message.reply_document(
@@ -363,21 +358,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.edit_message_text("❌ Твоя база данных пуста.")
             
+            # Затем показываем кнопки "новая ссылка" и "удалить"
             reply_markup = get_new_link_or_delete_keyboard()
+            # Мы не можем редактировать *предыдущее* сообщение (где были кнопки времени), а только ответить.
+            # Поэтому отправим новое сообщение с кнопками.
             await query.message.reply_text(
                 f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
                 f"Ссылка: {link}\n"
                 f"Статус: {selected_status}",
                 reply_markup=reply_markup
             )
+            # Очищаем контекст после добавления и отправки кнопок
             context.user_data.pop('current_link', None)
         except Exception as e:
             logger.error(f"Ошибка при добавлении поста для пользователя {user_id}: {e}")
             await query.edit_message_text("❌ Произошла ошибка при добавлении поста. Попробуй ещё раз.")
+            # Очищаем контекст в случае ошибки тоже
             context.user_data.pop('current_link', None)
     else:
+        # Если кнопка не распознана (не status_1,2,3,4, export_db, new_link, delete_current)
         await query.edit_message_text("❌ Неизвестная команда. Попробуй снова.")
+        # Очищаем контекст, чтобы не мешал
         context.user_data.pop('current_link', None)
+
 
 async def export_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -417,7 +420,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(message)
 
-# --- ОСНОВНАЯ ФУНКЦИЯ ---
+# Основная функция
 def main():
     global app
 
@@ -433,9 +436,10 @@ def main():
     app.add_handler(CommandHandler("export", export_database))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CallbackQueryHandler(button_handler))
+    # Обработчик для всех сообщений, кроме команд
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     
-    logger.info("Бот запущен с новой логикой обработки !")
+    logger.info("Бот запущен с новой логикой обработки!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
