@@ -204,6 +204,8 @@ def get_time_options_keyboard():
         [InlineKeyboardButton("Вышли в течение 2-3 часов", callback_data='status_3')],
         [InlineKeyboardButton("Вышли больше, чем через 3 часа", callback_data='status_4')]
     ]
+    # Добавляем кнопку "Отправить актуальную базу данных" сразу после кнопок времени
+    keyboard.append([InlineKeyboardButton("Отправить актуальную базу данных", callback_data='export_db')])
     return InlineKeyboardMarkup(keyboard)
 
 def get_new_link_keyboard():
@@ -212,11 +214,11 @@ def get_new_link_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_new_link_or_ask_keyboard():
-    # Заменяем кнопки "Удалить" на "Спросить снова"
+def get_after_add_keyboard():
+    # Клавиатура после успешного добавления, без "спросить снова"
     keyboard = [
         [InlineKeyboardButton("Отправить новую ссылку", callback_data='new_link')],
-        [InlineKeyboardButton("Спросить снова", callback_data='ask_again')] # Пример другой кнопки
+        [InlineKeyboardButton("Отправить актуальную базу данных", callback_data='export_db')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -264,7 +266,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['current_link'] = link
                 reply_markup = get_time_options_keyboard()
                 await update.message.reply_text(
-                    f"📌 Пост получен!\n\nСсылка: {link}\n\nУкажи, когда он вышел по кнопкам ниже ↓",
+                    f"📌 Пост получен!\n\nСсылка: {link}\n\nКогда он вышел?",
                     reply_markup=reply_markup
                 )
         else:
@@ -306,21 +308,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("✅ Готов принять новую ссылку. Отправь её сюда.")
         return # ВАЖНО: выходим
 
-    # --- Проверка: это нажатие "Спросить снова"? (пример) ---
-    if query.data == 'ask_again':
-        link = context.user_data.get('current_link')
-        if link:
-            # Показываем кнопки времени снова
-            reply_markup = get_time_options_keyboard()
-            await query.edit_message_text(
-                f"Повторяю вопрос для:\n\nСсылка: {link}\n\nКогда он вышел?",
-                reply_markup=reply_markup
-            )
-        else:
-            await query.edit_message_text("❌ Ошибка: ссылка не найдена.")
-        return # ВАЖНО: выходим
-
-    # --- Если это не экспорт, не новая ссылка, не 'спросить снова', значит выбор времени ---
+    # --- Если это не экспорт, не новая ссылка, значит выбор времени ---
     link = context.user_data.get('current_link')
 
     if not link:
@@ -339,22 +327,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if selected_status:
         try:
             number = add_post_to_excel(user_id, link, selected_status)
-            # После добавления, отправляем файл
-            excel_file = get_user_excel_file(user_id)
-            if os.path.exists(excel_file):
-                await query.message.reply_document(
-                    document=open(excel_file, 'rb'),
-                    filename=f'my_posts_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-                )
-            else:
-                await query.edit_message_text("❌ Твоя база данных пуста.")
+            # Убираем отправку файла после добавления
             
-            # Затем показываем кнопки "новая ссылка" и "спросить снова"
-            reply_markup = get_new_link_or_ask_keyboard()
+            # Затем показываем кнопки "новая ссылка" и "отправить базу данных"
+            reply_markup = get_after_add_keyboard()
             # Мы не можем редактировать *предыдущее* сообщение (где были кнопки времени), а только ответить.
             # Поэтому отправим новое сообщение с кнопками.
             await query.message.reply_text(
-                f"✅ Пост добавлен в твою базу данных!\n\n"
+                f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
                 f"Ссылка: {link}\n"
                 f"Статус: {selected_status}",
                 reply_markup=reply_markup
@@ -367,7 +347,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Очищаем контекст в случае ошибки тоже
             context.user_data.pop('current_link', None)
     else:
-        # Если кнопка не распознана (не status_1,2,3,4, export_db, new_link, ask_again)
+        # Если кнопка не распознана (не status_1,2,3,4, export_db, new_link)
         await query.edit_message_text("❌ Неизвестная команда. Попробуй снова.")
         # Очищаем контекст, чтобы не мешал
         context.user_data.pop('current_link', None)
@@ -430,7 +410,7 @@ def main():
     # Обработчик для всех сообщений, кроме команд
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     
-    logger.info("Бот запущен с обновленной логикой обработки (без кнопки удаления)!")
+    logger.info("Бот запущен с обновленной логикой обработки (без отправки таблицы после добавления, с кнопкой 'Отправить базу данных', без кнопки 'спросить снова')!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
