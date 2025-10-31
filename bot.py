@@ -196,17 +196,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_user_excel(user_id)
     await update.message.reply_text(
         f"👋 Привет, {update.effective_user.first_name}! Я бот для сохранения постов.\n\n"
-        "Ты можешь:\n"
-        "1. *Переслать* мне пост из Telegram (если он содержит или добавляется с комментарием содержащим ссылку).\n"
-        "2. Отправить мне *ссылку* на пост в Telegram.\n"
-        "3. Отправить *медиафайл* с подписью, содержащей ссылку.\n\n"
-        "Я сохраню её в *твою* персональную базу данных.\n\n"
+        "Просто *перешли* мне пост из Telegram — я автоматически сохраню его ссылку в *твою* персональную базу данных.\n\n"
         "Команды:\n"
         "/export - выгрузить *твою* базу данных в Excel\n"
         "/stats - статистика *твоих* постов"
     )
 
-# Обработка сообщений (любых, кроме команд)
+# Обработка сообщений (любых, кроме команд) — главная логика
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     init_user_excel(user_id)
@@ -216,28 +212,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text:
         link = extract_telegram_link(text)
         if link:
-            # Сохраняем ссылку в контексте пользователя
-            context.user_data['current_link'] = link
-            await _present_link_options(update, context, link)
-            return # Обработали, выходим
+            # Автоматически добавляем пост без показа кнопок
+            try:
+                number = add_post_to_excel(user_id, link)
+                await update.message.reply_text(
+                    f"✅ Пост #{number} автоматически добавлен в *твою* базу данных!\n\n"
+                    f"Ссылка: {link}",
+                    reply_markup=get_export_button()
+                )
+            except Exception as e:
+                logger.error(f"Ошибка при добавлении поста для пользователя {user_id}: {e}")
+                await update.message.reply_text("❌ Произошла ошибка при добавлении поста. Попробуй ещё раз.")
+        else:
+            # Ссылка не найдена — отправляем сообщение об ошибке
+            await update.message.reply_text(
+                "❌ Я не нашёл действительную ссылку на пост в Telegram в твоём сообщении.\n\n"
+                "Отправь ссылку, перешли пост с комментарием или отправь медиа с подписью содержащей ссылку."
+            )
+    else:
+        # Сообщение пустое (например, только пересылка без текста/подписи)
+        await update.message.reply_text(
+            "❌ Я не нашёл действительную ссылку на пост в Telegram в твоём сообщении.\n\n"
+            "Отправь ссылку, перешли пост с комментарием или отправь медиа с подписью содержащей ссылку."
+        )
 
-    # Если ссылка не найдена
-    await update.message.reply_text("❌ Я не нашёл действительную ссылку на пост в Telegram в твоём сообщении. Отправь ссылку, перешли пост с комментарием или отправь медиа с подписью содержащей ссылку.")
-
-# Вспомогательная функция для представления опций после извлечения ссылки
-async def _present_link_options(update: Update, context: ContextTypes.DEFAULT_TYPE, link: str):
-    keyboard = [
-        [InlineKeyboardButton("📝 Добавить пост + статус", callback_data='add_with_status')],
-        [InlineKeyboardButton("🗑️ Удалить пост", callback_data='delete_post')],
-        [InlineKeyboardButton("✅ Просто добавить пост", callback_data='add_simple')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"📌 Пост получен!\n\nСсылка: {link}\n\nВыбери действие:",
-        reply_markup=reply_markup
-    )
-
+# Обработка нажатий на кнопки (для /export и других команд)
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -254,44 +253,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text("❌ Твоя база данных пуста. Добавь хотя бы один пост.")
         return
-    
-    link = context.user_data.get('current_link')
-    
-    if not link:
-        await query.edit_message_text("❌ Ошибка: ссылка не найдена. Отправь ссылку заново.")
-        return
-    
-    if query.data == 'add_simple':
-        number = add_post_to_excel(user_id, link)
-        await query.edit_message_text(
-            f"✅ Пост #{number} добавлен в *твою* базу данных!\n\n"
-            f"Ссылка: {link}",
-            reply_markup=get_export_button()
-        )
-        context.user_data.clear()
-        
-    elif query.data == 'add_with_status':
-        context.user_data['waiting_for_status'] = True
-        await query.edit_message_text(
-            f"📝 Введи статус для поста:\n\n{link}\n\n"
-            "Например: Одобрено, На проверке, Отклонено и т.д."
-        )
-        
-    elif query.data == 'delete_post':
-        success = delete_post_from_excel(user_id, link)
-        if success:
-            await query.edit_message_text(
-                f"🗑️ Пост удалён из *твоей* базы данных!\n\n"
-                f"Ссылка: {link}",
-                reply_markup=get_export_button()
-            )
-        else:
-            await query.edit_message_text(
-                f"❌ Не удалось удалить пост. Возможно, его уже нет в базе.\n\n"
-                f"Ссылка: {link}",
-                reply_markup=get_export_button()
-            )
-        context.user_data.clear()
+
+    # Здесь можно добавить другие кнопки, если нужно
+    # Сейчас мы не используем кнопки для добавления/удаления, так как это делается автоматически
 
 async def export_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -350,7 +314,7 @@ def main():
     # Обработчик для всех сообщений, кроме команд
     app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
     
-    logger.info("Бот запущен с поддержкой пересланных сообщений (если они содержат ссылку)!")
+    logger.info("Бот запущен с автоматической обработкой пересланных постов!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
