@@ -60,7 +60,7 @@ def init_user_excel(user_id: int):
         
         ws.column_dimensions['A'].width = 8
         ws.column_dimensions['B'].width = 60
-        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['C'].width = 30
         ws.column_dimensions['D'].width = 22
         
         wb.save(excel_file)
